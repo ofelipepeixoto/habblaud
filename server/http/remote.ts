@@ -129,6 +129,34 @@ export function safeEqual(a: string, b: string): boolean {
 
 export class RemoteSessions {
   private readonly key: Buffer;
+  private readonly responses = new Map<ServerResponse, string>();
+  private responseTimer?: ReturnType<typeof setInterval>;
+
+  /** Revoke immediately; sweep expiry with one timer for the entire session registry. */
+  trackResponse(token: string, res: ServerResponse): void {
+    if (!this.verify(token)) { res.destroy(); return; }
+    this.responses.set(res, token);
+    const remove = () => {
+      this.responses.delete(res);
+      res.removeListener('close', remove);
+      res.removeListener('finish', remove);
+      if (!this.responses.size && this.responseTimer) {
+        clearInterval(this.responseTimer);
+        this.responseTimer = undefined;
+      }
+    };
+    res.once('close', remove);
+    res.once('finish', remove);
+    if (!this.responseTimer) {
+      this.responseTimer = setInterval(() => this.closeInvalidResponses(), 1_000);
+      this.responseTimer.unref();
+    }
+  }
+
+  private closeInvalidResponses(): void {
+    for (const [res, token] of this.responses) if (!this.verify(token)) res.destroy();
+  }
+
   /** Assinatura -> validade dos tokens encerrados por "Sair" antes de vencer (o cookie apagado não basta: uma cópia valeria até expirar). */
   private readonly revoked = new Map<string, number>();
 
@@ -165,6 +193,7 @@ export class RemoteSessions {
     const now = this.now();
     for (const [sig, exp] of this.revoked) if (exp <= now) this.revoked.delete(sig);
     this.revoked.set(parsed.sig, parsed.exp);
+    this.closeInvalidResponses();
     this.saveRevoked();
   }
 
@@ -496,6 +525,7 @@ export function createRemoteGate(deps: RemoteGateDeps): (req: IncomingMessage, r
     }
 
     if (authed) {
+      deps.sessions.trackResponse(readCookie(req.headers.cookie, COOKIE)!, res);
       remoteRequests.add(req);
       return false;
     }

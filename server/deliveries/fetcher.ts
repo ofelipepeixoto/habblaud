@@ -1,7 +1,8 @@
 // Lê os arquivos das entregas para o escritório. No modo Node o próprio servidor lê; no Docker, o que está numa pasta
 // montada (as pastas das contas, ex.: capturas em projects/) é lido aqui, e o resto o auxiliar do host busca:
 // POST /api/host/files/poll entrega os caminhos pedidos e /api/host/files/ack devolve o conteúdo (base64). Toda leitura
-// passa por checkFile (deliveries/files.ts), aqui e no auxiliar. Os arquivos lidos ficam num cache pequeno em memória.
+// passa por checkFile (deliveries/files.ts), aqui e no auxiliar. Cada pedido revalida a origem; bytes não ficam em cache.
+import type { ScopedArtifacts, ArtifactScope } from './scoped';
 import { randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { tr } from '../../shared/i18n';
@@ -10,7 +11,6 @@ import { checkFile, DELIVERY_FILE_MAX_BYTES } from './files';
 
 export const HOST_PRESENCE_MS = 10_000;
 export const WAIT_MS = 20_000;
-const CACHE_MAX_BYTES = 80 * 1024 * 1024;
 const MAX_PENDING = 16;
 
 export type FetchResult = { data: Buffer } | { error: string; status: number };
@@ -24,6 +24,8 @@ interface Pending {
 }
 
 export interface FileFetcherOptions {
+  /** Production authorization boundary; never falls back to legacy bridge/cache. */
+  artifacts?: ScopedArtifacts;
   /** Modo Node: lê direto do disco. */
   direct?: boolean;
   /** Docker: o caminho do host dentro do container, quando a pasta está montada (undefined = não está). */
@@ -34,8 +36,6 @@ export interface FileFetcherOptions {
 }
 
 export class FileFetcher {
-  private readonly cache = new Map<string, Buffer>();
-  private cacheBytes = 0;
   private readonly pending = new Map<string, Pending>();
   private readonly host: HostWait;
   private readonly now: () => number;
@@ -49,13 +49,8 @@ export class FileFetcher {
     return this.host.present();
   }
 
-  async get(path: string): Promise<FetchResult> {
-    const hit = this.cache.get(path);
-    if (hit) {
-      this.cache.delete(path);
-      this.cache.set(path, hit);
-      return { data: hit };
-    }
+  async get(path: string, scope?: ArtifactScope): Promise<FetchResult> {
+    if (this.opts.artifacts) return this.opts.artifacts.get(path, scope);
     const local = this.opts.direct ? path : this.opts.mapHostPath?.(path);
     if (local) {
       const r = this.readLocal(local);
@@ -72,7 +67,6 @@ export class FileFetcher {
         if (this.pending.delete(p.id)) done({ error: tr('o computador não respondeu a tempo'), status: 504 });
       }, WAIT_MS).unref?.();
     });
-    if ('data' in r) this.remember(path, r.data);
     return r;
   }
 
@@ -117,21 +111,10 @@ export class FileFetcher {
     if ('error' in c) return { error: c.error, status: c.error === tr('arquivo não encontrado') ? 404 : 403 };
     try {
       const data = (this.opts.read ?? readFileSync)(c.path);
-      this.remember(path, data);
       return { data };
     } catch {
       return { error: tr('arquivo ilegível'), status: 404 };
     }
   }
 
-  private remember(path: string, data: Buffer): void {
-    if (data.length > CACHE_MAX_BYTES / 4) return;
-    this.cache.set(path, data);
-    this.cacheBytes += data.length;
-    for (const [k, v] of this.cache) {
-      if (this.cacheBytes <= CACHE_MAX_BYTES) break;
-      this.cache.delete(k);
-      this.cacheBytes -= v.length;
-    }
-  }
 }

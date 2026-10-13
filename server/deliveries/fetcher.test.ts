@@ -11,7 +11,7 @@ describe('FileFetcher', () => {
     expect(await denied.get('/a/.ssh/x.png')).toEqual({ error: 'arquivo protegido', status: 403 });
   });
 
-  it('Docker: pasta montada lê aqui; o resto vai pelo auxiliar (poll → ack) e fica no cache', async () => {
+  it('Docker: pasta montada lê aqui; o resto vai pelo auxiliar (poll → ack) sem cache de bytes', async () => {
     let now = 1_000;
     const reads: string[] = [];
     const f = new FileFetcher({
@@ -30,7 +30,7 @@ describe('FileFetcher', () => {
     f.ack({ results: [{ id: req.id, ok: true, data: Buffer.from('png').toString('base64') }] });
     expect(await pending).toEqual({ data: Buffer.from('png') });
     now += HOST_PRESENCE_MS + 1;
-    expect(await f.get('/tmp/x.png')).toEqual({ data: Buffer.from('png') });
+    expect(await f.get('/tmp/x.png')).toMatchObject({ status: 503 });
   });
 
   it('auxiliar recusa: o erro dele chega ao navegador', async () => {

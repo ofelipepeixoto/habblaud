@@ -1,3 +1,6 @@
+> **Fork draft hardening:** based on marmottajr/habblaud, MIT © 2026 Márcio Junior.
+> Artifact grants and isolated demo introduce compatibility changes. Read [migration and limits](docs/hardening-migration.md) before use.
+
 <p align="center">
   <img src="client/public/assets/brand/logo-mark@4x.png" width="96" alt="Habblaud logo: a small pixel-art building" />
 </p>
@@ -34,9 +37,10 @@ And when two or more agents have nothing to do, the office gets a **social life*
 and they watch soccer together in the lounge, play video games and ping-pong, gossip in the kitchen, freshen up at the
 mirror and bet coins on rock-paper-scissors. See [Social life](#social-life).
 
-Everything runs on your machine, reading the files Claude Code itself already writes (plus only the `alias` lines in
-your shell, to give each account its letter). Nothing leaves the computer: Habblaud doesn't read credentials or make
-external calls.
+The core visualization runs locally and reads session files; it does not require external model calls.
+The default update check contacts GitHub every six hours, exposing ordinary connection metadata and the app version;
+disable it with `HABBLAUD_UPDATE_CHECK=0`. Remote access, when enabled, sends data to authenticated clients.
+Optional asset-generation scripts and external agent CLIs have their own network behavior.
 
 ## Contents
 

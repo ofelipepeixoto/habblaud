@@ -168,7 +168,7 @@ function sendFile(res: ServerResponse, data: Buffer, type: string, name: string)
   res.writeHead(200, {
     'Content-Type': type,
     'Content-Length': data.length,
-    'Cache-Control': 'private, max-age=300',
+    'Cache-Control': 'no-store',
     'X-Content-Type-Options': 'nosniff',
     'X-Frame-Options': 'SAMEORIGIN',
     'Content-Disposition': `inline; filename*=UTF-8''${encodeURIComponent(name)}`,
@@ -272,13 +272,6 @@ export function createApiHandler(deps: ApiDeps): (req: IncomingMessage, res: Ser
   const methodNotAllowed = (res: ServerResponse, allow: string) => {
     res.setHeader('Allow', allow);
     sendJson(res, 405, { error: tr('método não permitido') });
-  };
-
-  const handleDemo = async (req: IncomingMessage, res: ServerResponse) => {
-    const body = (await readJson(req)) as { enabled?: unknown };
-    if (typeof body?.enabled !== 'boolean') throw new HttpError(400, tr('esperado {enabled: boolean}'));
-    office.setDemo(body.enabled);
-    sendJson(res, 200, { ok: true, demo: office.isDemo() });
   };
 
   const handleCharacter = async (req: IncomingMessage, res: ServerResponse, id: string, method: string) => {
@@ -547,7 +540,7 @@ export function createApiHandler(deps: ApiDeps): (req: IncomingMessage, res: Ser
         else if (att.kind === 'capture') sendFile(res, att.data, att.type, att.name);
         else if (!deps.files) sendJson(res, 404, { error: tr('arquivos desligados') });
         else
-          deps.files.get(att.path).then(
+          deps.files.get(att.path, att.scope).then(
             (r) => ('data' in r ? sendFile(res, r.data, att.type, att.name) : sendJson(res, r.status, { error: r.error })),
             (err) => fail(res, err),
           );
@@ -666,10 +659,8 @@ export function createApiHandler(deps: ApiDeps): (req: IncomingMessage, res: Ser
       return true;
     }
     if (path === '/api/demo') {
-      // Liga o modo demonstração para todo mundo: só pelo computador (o celular com login só vê o que foi liberado).
-      if (method !== 'POST') methodNotAllowed(res, 'POST');
-      else if (isRemote(req)) sendJson(res, 403, { error: tr('não liberado no acesso remoto (veja HABBLAUD_REMOTE_ALLOW)') });
-      else handleDemo(req, res).catch((err) => fail(res, err));
+      req.resume();
+      sendJson(res, 403, { error: 'Start with HABBLAUD_DEMO=1 for an isolated demo; runtime overlay is disabled.' });
       return true;
     }
     if (path === '/api/updates') {

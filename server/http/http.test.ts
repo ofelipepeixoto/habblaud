@@ -184,13 +184,10 @@ describe('API HTTP', () => {
     expect(((await del.json()) as { error: string }).error).toMatch(/desligado/);
   });
 
-  it('POST /api/demo liga e desliga', async () => {
+  it('runtime demo cannot mix synthetic agents with real accounts', async () => {
     const on = await fetch(`${env.base}/api/demo`, { method: 'POST', headers: JSON_HEADERS, body: JSON.stringify({ enabled: true }) });
-    expect(await on.json()).toEqual({ ok: true, demo: true });
-    expect((await snapshotOf(env.base)).meta.demo).toBe(true);
-    expect((await fetch(`${env.base}/api/demo`, { method: 'POST', headers: JSON_HEADERS, body: '{"enabled":1}' })).status).toBe(400);
-    expect((await fetch(`${env.base}/api/demo`, { method: 'POST', headers: JSON_HEADERS, body: '{' })).status).toBe(400);
-    expect((await fetch(`${env.base}/api/demo`)).status).toBe(405);
+    expect(on.status).toBe(403);
+    expect((await snapshotOf(env.base)).meta.demo).toBe(false);
   });
 
   it('DNS rebinding: Host de outro domínio é recusado em qualquer rota', async () => {
@@ -218,7 +215,7 @@ describe('API HTTP', () => {
     expect((await snapshotOf(env.base)).meta.demo).toBe(false);
     const port = new URL(env.base).port;
     const same = await raw(env.base, '/api/demo', { method: 'POST', headers: { ...JSON_HEADERS, Host: `localhost:${port}`, Origin: `http://localhost:${port}` }, body: demoOn });
-    expect(same.status).toBe(200);
+    expect(same.status).toBe(403);
   });
 
   it('respostas JSON com nosniff e CORP same-origin; sem CORS', async () => {
@@ -386,7 +383,7 @@ describe('GET /api/mod/summary (mod do Claude Code)', () => {
   });
 
   it('agentes do demo ficam de fora (mesmo esperando); quem encerrou também', async () => {
-    await fetch(`${env.base}/api/demo`, { method: 'POST', headers: JSON_HEADERS, body: JSON.stringify({ enabled: true }) });
+    env.office.setDemo(true);
     const snap = await snapshotOf(env.base);
     expect(snap.agents.some((a) => a.id.startsWith('demo:'))).toBe(true);
     env.office.closeMain('.claude-conta2:3');
@@ -437,4 +434,37 @@ describe('guarda de Host/Origin', () => {
     expect(originAllowed('null', 'localhost:4747', allowed)).toBe(false);
     expect(originAllowed('file://', 'localhost:4747', allowed)).toBe(false);
   });
+});
+
+it('artifact HTTP routes retain the session scope and disable browser caching', async () => {
+  const { DeliveryIndex } = await import('../deliveries/deliveries');
+  const { FileFetcher } = await import('../deliveries/fetcher');
+  const { ScopedArtifacts } = await import('../deliveries/scoped');
+  const { createTerminalParser } = await import('../sources/terminal');
+  const { realpathSync } = await import('node:fs');
+  const tmp = tempDir(); const root = realpathSync(tmp.dir);
+  const a = join(root, 'a'), b = join(root, 'b'); mkdirSync(a); mkdirSync(b);
+  writeFileSync(join(a, 'ok.pdf'), 'synthetic A'); writeFileSync(join(b, 'other.pdf'), 'synthetic B');
+  const policy = join(root, 'operator.json');
+  writeFileSync(policy, JSON.stringify([{ account: 'fixture', sessionId: 's1', project: a, root: a }]), { mode: 0o600 });
+  const transcript = join(root, 'session.jsonl');
+  const lines = [
+    { type: 'user', uuid: 'u', timestamp: new Date().toISOString(), message: { role: 'user', content: 'Create a synthetic report' } },
+    { type: 'assistant', uuid: 't', timestamp: new Date().toISOString(), message: { role: 'assistant', content: [{ type: 'tool_use', id: 'tool', name: 'Write', input: { file_path: join(a, 'ok.pdf') } }] } },
+    { type: 'assistant', uuid: 'r', timestamp: new Date().toISOString(), message: { role: 'assistant', stop_reason: 'end_turn', content: [{ type: 'text', text: `Synthetic result: [allowed](${a}/ok.pdf) and [outside](${b}/other.pdf). These are only fixtures.` }] } },
+  ];
+  writeFileSync(transcript, lines.map(x => JSON.stringify(x)).join('\n')+'\n');
+  const deliveries = new DeliveryIndex({ sessions: async () => [{ account: 'fixture', sessionId: 's1', project: a, projectDir: 'a', lastAt: 1, size: 1, open: false }], resolve: () => ({path: transcript, createParser: createTerminalParser}), isBusy: () => false });
+  const env = await start({ terminal: true, deliveries, files: new FileFetcher({ artifacts: new ScopedArtifacts(policy) }) });
+  try {
+    const list = await deliveries.list(); expect(list).toHaveLength(1);
+    const allowed = list[0].attachments.find(x => x.name === 'ok.pdf')!;
+    const outside = list[0].attachments.find(x => x.name === 'other.pdf')!;
+    const response = await fetch(`${env.base}/api/deliveries/file/${allowed.id}`);
+    expect(response.status).toBe(200); expect(response.headers.get('cache-control')).toBe('no-store');
+    expect(await response.text()).toBe('synthetic A');
+    expect((await fetch(`${env.base}/api/deliveries/file/${outside.id}`)).status).toBe(403);
+    writeFileSync(policy, '[]');
+    expect((await fetch(`${env.base}/api/deliveries/file/${allowed.id}`)).status).toBe(403);
+  } finally { await env.close(); env.cleanup(); tmp.cleanup(); }
 });
