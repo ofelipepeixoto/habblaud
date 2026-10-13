@@ -18,13 +18,24 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
-          node-version: '22.12'
+          node-version: '24'
           cache: npm
 
-      - run: npm ci
-      - run: npm run typecheck
-      - run: npm test
-      - run: npm run build
+      - name: Acquire dependencies without lifecycle scripts
+        run: npm ci --ignore-scripts --no-audit --no-fund
+      - name: Acquire pinned test environment
+        run: docker pull node:24-bookworm-slim@sha256:d6aa754f16b3197301076f047b5def2f02ea1dbbc2ca920407d46d7ec7f87b20
+      - name: Check in an offline, credential-free container
+        shell: bash
+        run: |
+          tar --exclude=.git -cf - . | docker run --rm -i \
+            --network none --read-only --cap-drop ALL \
+            --security-opt no-new-privileges --pids-limit 256 --memory 2g --cpus 2 \
+            --tmpfs /tmp:rw,exec,nosuid,nodev,size=768m \
+            node:24-bookworm-slim@sha256:d6aa754f16b3197301076f047b5def2f02ea1dbbc2ca920407d46d7ec7f87b20 \
+            sh -c 'mkdir /tmp/app && tar --no-same-owner -xf - -C /tmp/app && cd /tmp/app && npm run typecheck && npm test -- --maxWorkers=2 && npm run build'

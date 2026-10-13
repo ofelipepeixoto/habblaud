@@ -49,13 +49,14 @@ import { DictationService } from './dictation/dictation';
 import { createWhisperTranscriber, findWhisper } from './dictation/whisper';
 import { DeliveryIndex } from './deliveries/deliveries';
 import { FileFetcher } from './deliveries/fetcher';
+import { ScopedArtifacts } from './deliveries/scoped';
 
 const config = loadConfig();
 const startedAt = Date.now();
 
 // Nome antigo (CodeTown, até a 0.3.2): leva ~/.codetown para ~/.habblaud antes de ler qualquer estado e avisa
 // das variáveis CODETOWN_* que não valem mais. No Docker, quem migra é o docker:up.
-if (!config.inDocker) {
+if (!config.inDocker && !config.demo) {
   const r = migrateLegacyStateDir(config.home);
   const msg = describeStateMigration(r);
   if (msg) (r.error ? log.warn : log.info)(msg);
@@ -83,7 +84,7 @@ updates.load();
 const accounts = new AccountsService({
   dirs: config.claudeDirs,
   home: config.home,
-  env: process.env,
+  env: config.demo ? {} : process.env,
   usageDir: config.usageDir,
   onChange: () => late.office?.markDirty(),
 });
@@ -107,7 +108,7 @@ const office = new Office({
 // pastas do Codex; HABBLAUD_CODEX=0 desliga), com o histórico dela no HistorySet abaixo e as contas registradas por
 // ela mesma (accounts.setProviderAccounts). `codex` também recebe os eventos dos hooks do Codex (CodexLive).
 const claude = new ClaudeWatcher({ accounts, office, inDocker: config.inDocker });
-const agents = new SourceSet([claude]);
+const agents = new SourceSet(config.demo ? [] : [claude]);
 const codexDirs = config.codex ? discoverCodexDirs(process.env, config.home) : [];
 const codex = codexDirs.length ? new CodexSource({ accounts, office, dirs: codexDirs, env: process.env, home: config.home }) : undefined;
 if (codex) agents.add(codex);
@@ -151,14 +152,7 @@ const deliveries = history
   : undefined;
 const deliveryFiles = deliveries
   ? new FileFetcher({
-      direct: !config.inDocker,
-      mapHostPath: (p) => {
-        for (const e of accounts.entries()) {
-          const host = e.detected.configDir.replace(/\/+$/, '');
-          if (host && p.startsWith(`${host}/`)) return `${e.dir.replace(/\/+$/, '')}${p.slice(host.length)}`;
-        }
-        return undefined;
-      },
+      artifacts: new ScopedArtifacts(process.env.HABBLAUD_DELIVERY_SCOPES),
     })
   : undefined;
 // Linha do tempo do timelapse: grava cada snapshot novo (com throttle) em <dataDir>/timeline.
@@ -193,7 +187,7 @@ const ptyOptIn = isTruthy(ptyFlag);
 // liberação acima mais a trava das mensagens. No Docker, quem roda é o auxiliar do host (npm run codex:bridge).
 const spawnOn = config.messages && ptyOptIn;
 const attachments = spawnOn ? new AttachmentStore() : undefined;
-const spawnBin = config.inDocker ? undefined : runnableClaudeBin(process.env);
+const spawnBin = config.demo || config.inDocker ? undefined : runnableClaudeBin(process.env);
 const spawn = spawnOn
   ? new SpawnService(config.inDocker ? { attachments } : { opener: createOpener(), cli: spawnBin ? createCliRunner(spawnBin) : undefined, attachments })
   : undefined;
@@ -218,7 +212,7 @@ late.messages = messages;
 // Terminal interativo (abrir/assumir sessões e encerrar agentes): opt-in com HABBLAUD_PTY=1, só com bind local, fora
 // do Docker, com node-pty e o executável do claude no PATH.
 const claudeBinSetting = process.env.HABBLAUD_CLAUDE_BIN?.trim();
-const claudeBin = claudeBinFrom();
+const claudeBin = config.demo ? undefined : claudeBinFrom();
 let spawnPty: SpawnPty | null = null;
 let ptyScreen: ScreenFactory | undefined;
 let ptyOff: string | undefined;
@@ -408,7 +402,7 @@ server.listen(config.port, config.host, () => {
   log.info(tr('🏢 Habblaud {0}{1}{2} em http://{3}:{4}', [config.version, config.dev ? ' (dev)' : '', config.inDocker ? ' (docker)' : '', host, config.port]));
   const list = accounts.entries();
   if (!list.length) log.warn(tr('Nenhuma pasta do Claude Code encontrada (defina HABBLAUD_CLAUDE_DIRS).'));
-  for (const dir of codexDirsRefused(process.env, config.home)) {
+  for (const dir of config.demo ? [] : codexDirsRefused(process.env, config.home)) {
     log.warn(tr('{0} é uma pasta do Codex, não do Claude Code: fica fora das contas do Claude Code.', [dir]));
   }
   for (const a of list) {
@@ -426,7 +420,7 @@ server.listen(config.port, config.host, () => {
   } else {
     log.info(tr('   Codex: {0}.', [config.codex ? tr('nenhuma pasta do Codex encontrada (defina HABBLAUD_CODEX_DIRS)') : tr('desligado (HABBLAUD_CODEX=0)')]));
   }
-  if (office.isDemo()) log.info(tr('   Modo demonstração ligado (agentes simulados misturados aos reais).'));
+  if (office.isDemo()) log.info('   Isolated demo: synthetic agents only; real actions disabled.');
   if (config.terminal) log.info(tr('   Terminal: ligado (acesso só local).'));
   else log.info(tr('   Terminal: desligado ({0}).', [terminalOffReason(process.env, config.host, config.inDocker)]));
   log.info(ptys ? tr('   Terminal interativo: ligado ({0}).', [claudeBin]) : tr('   Terminal interativo: {0}.', [ptyOff ?? tr('desligado')]));

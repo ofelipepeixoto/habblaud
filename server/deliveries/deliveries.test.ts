@@ -101,7 +101,7 @@ describe('entregas: pedidos do transcript', () => {
     ]);
     expect(JSON.stringify(list)).not.toContain('/Users/ana/proj/print.png');
     expect(JSON.stringify(list)).not.toContain('.ssh');
-    expect(idx.attachment(d.attachments[0].id)).toMatchObject({ kind: 'file', path: '/Users/ana/proj/print.png', type: 'image/png' });
+    expect(idx.attachment(d.attachments[0].id)).toMatchObject({ kind: 'file', path: '/Users/ana/proj/print.png', type: 'image/png', scope: { account: '.claude', sessionId: 's1', project: '/Users/ana/proj' } });
     expect(idx.attachment(d.attachments[2].id)).toMatchObject({ kind: 'capture', type: 'image/png' });
     expect(idx.attachment('nao-existe')).toBeUndefined();
     // "De nada!" sem ferramentas não é entrega; o último pedido conta só quando o agente para.

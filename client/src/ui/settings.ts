@@ -278,7 +278,7 @@ export class SettingsPopover implements UiComponent {
     this.theme.set(p.theme);
     this.language.set(savedLanguage());
     this.soundGroup.render();
-    setHidden(this.demoGroup, this.ctx.store.mock || access().remote);
+    setHidden(this.demoGroup, true); // Demo is a separate isolated startup mode.
     setHidden(this.remoteGroup, !access().remote);
     this.about.render();
 

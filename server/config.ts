@@ -1,7 +1,7 @@
 // Configuração do servidor a partir das variáveis de ambiente (documentadas em server/README.md).
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readFileSync, mkdtempSync } from 'node:fs';
 import { isIP } from 'node:net';
-import { homedir } from 'node:os';
+import { homedir, tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { discoverClaudeDirs } from './accounts/detect';
@@ -150,33 +150,34 @@ export function messagesOffReason(env: NodeJS.ProcessEnv, host: string, inDocker
 }
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env, argv: string[] = process.argv): ServerConfig {
-  const home = env.HOME || homedir();
+  const demo = isTruthy(env.HABBLAUD_DEMO);
+  const home = demo ? mkdtempSync(join(tmpdir(), 'habblaud-demo-')) : env.HOME || homedir();
   const inDocker = detectDocker(env);
   const port = Number.parseInt(env.HABBLAUD_PORT ?? '', 10);
   const rootDir = findRoot(dirname(fileURLToPath(import.meta.url)));
-  const host = env.HABBLAUD_HOST?.trim() || '127.0.0.1';
+  const host = demo ? '127.0.0.1' : env.HABBLAUD_HOST?.trim() || '127.0.0.1';
   const pkg = readPackage(rootDir);
-  const remote = parseRemoteConfig(env, inDocker);
+  const remote: ReturnType<typeof parseRemoteConfig> = demo ? {} : parseRemoteConfig(env, inDocker);
   return {
     port: Number.isFinite(port) && port > 0 && port < 65536 ? port : 4747,
     host,
     dev: argv.includes('--dev'),
-    demo: isTruthy(env.HABBLAUD_DEMO),
+    demo,
     inDocker,
     home,
-    claudeDirs: discoverClaudeDirs(env, home),
-    dataDir: resolve(env.HABBLAUD_DATA_DIR?.trim() || (inDocker ? '/data' : join(home, '.habblaud'))),
-    usageDir: resolve(env.HABBLAUD_USAGE_DIR?.trim() || join(home, '.habblaud', 'usage')),
+    claudeDirs: demo ? [] : discoverClaudeDirs(env, home),
+    dataDir: demo ? home : resolve(env.HABBLAUD_DATA_DIR?.trim() || (inDocker ? '/data' : join(home, '.habblaud'))),
+    usageDir: demo ? join(home, 'usage') : resolve(env.HABBLAUD_USAGE_DIR?.trim() || join(home, '.habblaud', 'usage')),
     allowedHosts: parseAllowedHosts(env.HABBLAUD_ALLOWED_HOSTS),
-    terminal: terminalOffReason(env, host, inDocker) === undefined,
-    messages: messagesOffReason(env, host, inDocker) === undefined,
-    timeline: !env.HABBLAUD_TIMELINE?.trim() || isTruthy(env.HABBLAUD_TIMELINE),
+    terminal: !demo && terminalOffReason(env, host, inDocker) === undefined,
+    messages: !demo && messagesOffReason(env, host, inDocker) === undefined,
+    timeline: !demo && (!env.HABBLAUD_TIMELINE?.trim() || isTruthy(env.HABBLAUD_TIMELINE)),
     rootDir,
     version: pkg.version,
     repo: pkg.repo,
-    updateCheck: !env.HABBLAUD_UPDATE_CHECK?.trim() || isTruthy(env.HABBLAUD_UPDATE_CHECK),
-    codex: !env.HABBLAUD_CODEX?.trim() || isTruthy(env.HABBLAUD_CODEX),
-    remote: remote.config,
+    updateCheck: !demo && (!env.HABBLAUD_UPDATE_CHECK?.trim() || isTruthy(env.HABBLAUD_UPDATE_CHECK)),
+    codex: !demo && (!env.HABBLAUD_CODEX?.trim() || isTruthy(env.HABBLAUD_CODEX)),
+    remote: demo ? undefined : remote.config,
     remoteWarning: remote.warning,
   };
 }

@@ -45,7 +45,7 @@ export interface DeliveryIndexOptions {
 
 export type StoredAttachment =
   | { kind: 'capture'; type: string; data: Buffer; name: string }
-  | { kind: 'file'; path: string; name: string; type: string };
+  | { kind: 'file'; path: string; name: string; type: string; scope?: { account: string; sessionId: string; project: string } };
 
 interface Turn {
   start: TerminalEntry & { kind: 'user' };
@@ -309,7 +309,9 @@ export class DeliveryIndex {
       const ft = fileType(path);
       if (!ft) continue;
       const aid = shortId(`${id}|${path}`);
-      files.set(aid, { kind: 'file', path, name: baseName(path), type: ft.type });
+      files.set(aid, { kind: 'file', path, name: baseName(path), type: ft.type,
+        ...(s.project ? { scope: { account: s.account, sessionId: s.sessionId, project: s.project } } : {}),
+      });
       attachments.push({ id: aid, name: baseName(path), kind: ft.kind, ...(caption ? { caption } : {}) });
     }
     t.captures.forEach((c, i) => {
